@@ -115,7 +115,7 @@ sudo systemctl restart docker
 #### Verify GPU access inside Docker
 
 ```bash
-docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+docker run --rm --gpus all nvidia/cuda:13.0.3-base-ubuntu24.04 nvidia-smi
 ```
 
 ---
@@ -220,28 +220,28 @@ sudo fail2ban-client status sshd
    | `VLLM_API_KEY` | Internal key for LiteLLM → vLLM authentication (defense-in-depth, even on the internal network). Generate with: `python3 -c "import secrets; print('vllm-' + secrets.token_urlsafe(32))"` |
 
 2. **Set up the firewall** (before exposing any ports):
-
    ```bash
    sudo bash firewall.sh
    ```
 
-3. **Start the stack:**
+3. **(Optional) Pre-download model weights** into the Docker volume to avoid the initial startup delay:
+   ```bash
+   ./download_model.sh
+   ```
+    This script runs a temporary container with the same configuration as vLLM, mounts the `hf-cache` volume, and downloads the model weights using the HuggingFace API. The weights are stored in the volume, so when you start the stack normally, vLLM loads them from local storage instead of downloading again. This is especially useful for large models like Gemma 4 (31B), which can take several minutes to download and load on the first run.
 
+4. **Start the stack:**
    ```bash
    docker compose up -d
    ```
 
-   The first run downloads ~60 GB of model weights; subsequent starts load from the `hf-cache` Docker volume.
-
-4. **Verify health:**
-
+5. **Verify health:**
    ```bash
    docker compose ps          # both services should show "healthy"
    docker compose logs -f     # watch startup progress (model loading takes several minutes)
    ```
 
-5. **Test a request:**
-
+6. **Test a request:**
    ```bash
    curl http://localhost:4000/v1/chat/completions \
      -H "Authorization: Bearer <LITELLM_MASTER_KEY>" \
@@ -277,15 +277,16 @@ Both containers are hardened beyond Docker defaults:
 
 ```
 .
-├── docker-compose.yaml    # service orchestration (vLLM + LiteLLM, networks, volumes)
-├── litellm_config.yaml    # LiteLLM routing, concurrency, caching, logging
-├── firewall.sh            # UFW + iptables DOCKER-USER chain setup
 ├── .env                   # secrets (not committed — created from .env.example)
 ├── .env.example           # template with key-generation commands
-├── .dockerignore          # excludes non-runtime files from build context
-├── version.txt            # project version
-├── LICENSE
-└── README.md
+├── .gitignore             # ignores .env and other sensitive/generated files
+├── docker-compose.yaml    # service orchestration (vLLM + LiteLLM, networks, volumes)
+├── download_model.sh      # utility to pre-download model weights into the Docker volume
+├── firewall.sh            # UFW + iptables DOCKER-USER chain setup
+├── LICENSE                # project license
+├── litellm_config.yaml    # LiteLLM routing, concurrency, caching, logging
+├── README.md              # this file
+└── version.txt            # project version
 ```
 
 ---
@@ -301,6 +302,7 @@ Both containers are hardened beyond Docker defaults:
 | `--max-model-len` | `8192` | Context window in tokens. Can be raised (e.g. `32768`, `131072`) at the cost of higher VRAM usage. |
 | `--gpu-memory-utilization` | `0.90` | Fraction of VRAM vLLM pre-allocates for KV cache. |
 | `--enable-prefix-caching` | enabled | Caches common prompt prefixes in GPU memory to avoid recomputation. |
+| `TORCHINDUCTOR_CACHE_DIR` / `TRITON_CACHE_DIR` | `/root/.cache/vllm/...` | Relocates JIT-compiled kernels off `/tmp`, so Triton can load its generated `.so` files without making the general temp mount executable. |
 | `shm_size` | `16g` | Shared memory for NCCL; avoids the security risk of `ipc: host`. |
 
 ### LiteLLM (gateway)
