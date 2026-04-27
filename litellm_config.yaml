@@ -1,0 +1,41 @@
+# ============================================================
+# LiteLLM proxy configuration
+# Docs: https://docs.litellm.ai/docs/proxy/configs
+# ============================================================
+
+# ----------------------------------------------------------
+# Model routing – maps client-facing model names to backends
+# ----------------------------------------------------------
+model_list:
+  - model_name: os.environ/MODEL_NAME   # resolved from MODEL_NAME in .env at startup
+    litellm_params:
+      model: os.environ/LITELLM_MODEL  # resolved from LITELLM_MODEL (must be "openai/" + MODEL_NAME for vLLM backends)
+      api_base: http://vllm:8000/v1    # vLLM address via Docker internal DNS (never exposed to the host)
+      api_key: os.environ/VLLM_API_KEY # read from env at runtime; authenticates to vLLM even on the internal network
+      timeout: 600                     # max seconds to wait for a full response (high due to long-context generation)
+      stream_timeout: 120              # max seconds of silence between streaming chunks before aborting
+      num_retries: 2                   # automatic retries on transient errors (GPU OOM, preemption, network blip)
+      allowed_fails: 3                 # consecutive failures before marking the model unhealthy
+      cooldown_time: 30                # seconds to wait before re-adding an unhealthy model to the routing pool
+
+# ----------------------------------------------------------
+# Gateway settings – proxy-wide auth and alerting
+# ----------------------------------------------------------
+general_settings:
+  allow_user_auth: false               # only LITELLM_MASTER_KEY is accepted; end-users cannot create their own keys
+  alerting: []                         # no external alert integrations (Slack, PagerDuty, etc.)
+
+# ----------------------------------------------------------
+# LiteLLM behaviour – global defaults for all models
+# ----------------------------------------------------------
+litellm_settings:
+  request_timeout: 600                 # global fallback timeout (seconds) when a model entry omits its own
+  json_logs: true                      # structured JSON logs for easier parsing by log aggregators (Loki, ELK)
+  drop_params: true                    # silently discard unsupported params (e.g. logprobs) instead of returning 400
+  set_verbose: false                   # keep off in production — when true, full prompts are written to logs
+  redact_messages_in_exceptions: true  # strip prompt content from error messages and tracebacks
+  max_parallel_requests: 4             # concurrency gate: max requests forwarded to vLLM simultaneously
+  cache: true                          # enable in-memory response cache; identical requests skip the GPU entirely
+  cache_params:
+    type: local                        # in-process dictionary cache (no Redis dependency); fits single-instance deploys
+    ttl: 3600                          # cached entries expire after 1 hour to bound memory and freshness

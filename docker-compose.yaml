@@ -1,0 +1,133 @@
+# ============================================================
+# llm_serving – Docker Compose stack
+# Gemma 4 31B served via vLLM + LiteLLM gateway
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # vLLM – GPU inference engine (no published port)
+  # ----------------------------------------------------------
+  vllm:
+    image: vllm/vllm-openai:v0.19.1-cu130
+    container_name: vllm
+    shm_size: "16g"                     # NCCL shared memory; avoids the security risk of ipc:host
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:?HF_TOKEN must be set in .env}
+      - VLLM_API_KEY=${VLLM_API_KEY:?VLLM_API_KEY must be set in .env}
+    volumes:
+      - hf-cache:/root/.cache/huggingface    # persist the ~60 GB model weights across container restarts
+    networks:
+      - backend                         # isolated bridge for vLLM ↔ LiteLLM traffic only
+      - egress                          # non-isolated bridge so vLLM can reach HuggingFace for downloads
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all               # reserve every available GPU on the host
+              capabilities: [gpu]
+        limits:
+          memory: 64g                  # hard cap on system RAM; prevents the host OOM-killer from hitting other services
+    memswap_limit: 64g                   # equal to memory limit = swap disabled; GPU workloads degrade severely on swap
+    command: >-
+      --model ${HF_MODEL_ID}
+      --served-model-name ${MODEL_NAME}
+      --dtype bfloat16
+      --max-model-len 8192
+      --gpu-memory-utilization 0.90
+      --enable-prefix-caching
+      --disable-log-requests
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536                    # vLLM opens many fds (model files, CUDA contexts, client sockets)
+    pids_limit: 1024                     # fork-bomb protection; 1024 is generous for a single inference engine
+    tmpfs:
+      - /tmp:size=1g                     # fast scratch space on RAM; avoids writes to the container's overlay layer
+    security_opt:
+      - no-new-privileges:true           # blocks setuid/setgid binaries from escalating privileges
+    cap_drop:
+      - ALL                              # NVIDIA runtime injects GPU access; no Linux capabilities needed
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s               # model loading is slow; avoid false-negative health failures during startup
+    stop_grace_period: 60s              # give in-flight generation requests time to complete before SIGKILL
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"                # rotate at 50 MB per file
+        max-file: "3"                  # keep at most 3 rotated log files (~150 MB total)
+    restart: unless-stopped
+
+  # ----------------------------------------------------------
+  # LiteLLM – API gateway (auth, rate limiting, caching)
+  # ----------------------------------------------------------
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.83.10-stable
+    container_name: litellm
+    ports:
+      - "0.0.0.0:4000:4000"            # bind IPv4 only; avoids IPv6 bypass when Docker IPv6 is enabled
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set in .env}
+      - VLLM_API_KEY=${VLLM_API_KEY}   # forwarded to litellm_config.yaml via os.environ/VLLM_API_KEY
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro   # read-only mount; changes require a container restart
+    networks:
+      - backend                         # isolated bridge only; the gateway has no reason for internet access
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    tmpfs:
+      - /tmp:size=256m                   # scratch space on RAM for temporary files
+    read_only: true                      # immutable rootfs; only /tmp (tmpfs) is writable
+    pids_limit: 256                      # fork-bomb protection; the gateway needs far fewer processes than vLLM
+    security_opt:
+      - no-new-privileges:true           # blocks setuid/setgid privilege escalation
+    cap_drop:
+      - ALL                              # pure Python gateway; no Linux capabilities required
+    depends_on:
+      vllm:
+        condition: service_healthy     # delay start until vLLM's /health endpoint returns 200
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health/readiness || exit 1"]
+      interval: 15s                    # readiness check also verifies the vLLM backend is reachable
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 30s              # allow in-flight proxy requests to drain before SIGKILL
+    deploy:
+      resources:
+        limits:
+          memory: 2g                   # hard RAM cap; the gateway is lightweight
+          cpus: "2.0"                  # prevent CPU starvation of the host or vLLM
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"                  # keep 5 rotated files (~250 MB total; more than vLLM due to request logging)
+    restart: unless-stopped
+
+# ============================================================
+# Networks
+# ============================================================
+networks:
+  backend:
+    driver: bridge
+    internal: true                      # no default gateway; containers cannot reach the internet through this network
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24        # fixed subnet avoids collisions with host routes, VPNs, or other Docker networks
+  egress:
+    driver: bridge
+    internal: false                     # has a default gateway; allows vLLM to download model weights from HuggingFace
+    ipam:
+      config:
+        - subnet: 172.30.1.0/24        # separate fixed subnet for the egress network
+
+# ============================================================
+# Named volumes
+# ============================================================
+volumes:
+  hf-cache:                            # persists the HuggingFace model cache across container restarts and image pulls

@@ -1,0 +1,95 @@
+# =========================
+# .gitignore for Linux / UNIX / Bash / YAML / Docker / Docker Compose
+# =========================
+
+# --- OS / Filesystem ---
+.DS_Store
+Thumbs.db
+Icon?
+.Trash-*
+.nfs*
+
+# --- Linux / UNIX temporary files ---
+*.swp
+*.swo
+*~
+*.tmp
+*.temp
+.cache/
+.tmp/
+
+# --- Logs / runtime files ---
+*.log
+logs/
+*.pid
+*.pid.lock
+*.seed
+*.out
+*.err
+
+# --- Shell / Bash artifacts ---
+*.bash_history
+.bash_history
+.zsh_history
+.history
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local
+*.secret
+secrets/
+
+# --- YAML-generated / templated outputs ---
+*.yaml.bak
+*.yml.bak
+*.yaml.tmp
+*.yml.tmp
+*.yaml.orig
+*.yml.orig
+
+# --- Docker ---
+.docker/
+.docker-cache/
+.docker-data/
+.docker-volumes/
+
+# Docker build / export artifacts
+*.tar
+*.tar.gz
+*.tgz
+
+# --- Docker Compose local overrides ---
+docker-compose.override.yml
+docker-compose.*.local.yml
+compose.override.yml
+compose.*.local.yml
+
+# --- Common container / orchestration env files ---
+.env.docker
+.env.compose
+
+# --- IDE / editor files often used with shell/yaml/docker projects ---
+.vscode/
+.idea/
+*.iml
+
+# --- Test / coverage / lint caches ---
+coverage/
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.shellcheckrc.local
+
+# --- Archive / backup files ---
+*.bak
+*.backup
+*.old
+*.orig
+
+# --- Generated local data mounts ---
+data/
+volumes/
