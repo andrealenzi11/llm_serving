@@ -29,6 +29,7 @@ services:
               capabilities: [gpu]
         limits:
           memory: 64g                  # hard cap on system RAM; prevents the host OOM-killer from hitting other services
+          pids: 1024                   # fork-bomb protection; 1024 is generous for a single inference engine
     memswap_limit: 64g                   # equal to memory limit = swap disabled; GPU workloads degrade severely on swap
     command: >-
       --model ${HF_MODEL_ID}
@@ -42,7 +43,6 @@ services:
       nofile:
         soft: 65536
         hard: 65536                    # vLLM opens many fds (model files, CUDA contexts, client sockets)
-    pids_limit: 1024                     # fork-bomb protection; 1024 is generous for a single inference engine
     tmpfs:
       - /tmp:size=1g                     # fast scratch space on RAM; avoids writes to the container's overlay layer
     security_opt:
@@ -82,7 +82,6 @@ services:
     tmpfs:
       - /tmp:size=256m                   # scratch space on RAM for temporary files
     read_only: true                      # immutable rootfs; only /tmp (tmpfs) is writable
-    pids_limit: 256                      # fork-bomb protection; the gateway needs far fewer processes than vLLM
     security_opt:
       - no-new-privileges:true           # blocks setuid/setgid privilege escalation
     cap_drop:
@@ -102,6 +101,7 @@ services:
         limits:
           memory: 2g                   # hard RAM cap; the gateway is lightweight
           cpus: "2.0"                  # prevent CPU starvation of the host or vLLM
+          pids: 256                    # fork-bomb protection; the gateway needs far fewer processes than vLLM
     logging:
       driver: json-file
       options:

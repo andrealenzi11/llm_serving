@@ -93,3 +93,7 @@ coverage/
 # --- Generated local data mounts ---
 data/
 volumes/
+
+# --- Personal notes / scratch files ---
+report.md
+
