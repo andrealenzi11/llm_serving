@@ -41,7 +41,7 @@ services:
       --quantization nvfp4
       --max-model-len 8192
       --max-num-batched-tokens 8192
-      --gpu-memory-utilization 0.90
+      --gpu-memory-utilization 0.82
       --enable-prefix-caching
     ulimits:
       nofile:
@@ -84,7 +84,8 @@ services:
     volumes:
       - ./litellm_config.yaml:/app/config.yaml:ro   # read-only mount; changes require a container restart
     networks:
-      - backend                         # isolated bridge only; the gateway has no reason for internet access
+      - frontend                        # non-internal bridge; required for Docker to wire up the host-port NAT rule (ports: 4000)
+      - backend                         # isolated bridge for vLLM ↔ LiteLLM traffic
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
     tmpfs:
       - /tmp:size=256m                   # scratch space on RAM for temporary files
@@ -119,6 +120,12 @@ services:
 # Networks
 # ============================================================
 networks:
+  frontend:
+    driver: bridge
+    internal: false                     # non-internal so Docker creates host→container NAT rules for published ports
+    ipam:
+      config:
+        - subnet: 172.30.2.0/24        # fixed subnet; separate from backend/egress to avoid route collisions
   backend:
     driver: bridge
     internal: true                      # no default gateway; containers cannot reach the internet through this network
