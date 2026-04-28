@@ -9,7 +9,7 @@ services:
   # vLLM – GPU inference engine (no published port)
   # ----------------------------------------------------------
   vllm:
-    image: vllm/vllm-openai:v0.19.1-cu130
+    image: vllm/vllm-openai:v0.20.0-cu130
     container_name: vllm
     shm_size: "16g"                      # NCCL shared memory; avoids the security risk of ipc:host
     environment:
@@ -18,7 +18,7 @@ services:
       - TORCHINDUCTOR_CACHE_DIR=/root/.cache/vllm/torchinductor
       - TRITON_CACHE_DIR=/root/.cache/vllm/triton
     volumes:
-      - hf-cache:/root/.cache/huggingface    # persist the ~60 GB model weights across container restarts
+      - hf-cache:/root/.cache/huggingface    # persist the ~16 GB model weights across container restarts
       - vllm-compile-cache:/root/.cache/vllm # persist JIT caches and keep executable artifacts off /tmp
     networks:
       - backend                          # isolated bridge for vLLM ↔ LiteLLM traffic only
@@ -37,8 +37,10 @@ services:
     command: >-
       ${HF_MODEL_ID}
       --served-model-name ${MODEL_NAME}
-      --dtype bfloat16
+      --dtype auto
+      --quantization nvfp4
       --max-model-len 8192
+      --max-num-batched-tokens 8192
       --gpu-memory-utilization 0.90
       --enable-prefix-caching
     ulimits:
@@ -76,6 +78,9 @@ services:
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set in .env}
       - VLLM_API_KEY=${VLLM_API_KEY}   # forwarded to litellm_config.yaml via os.environ/VLLM_API_KEY
+      - MODEL_NAME=${MODEL_NAME:?MODEL_NAME must be set in .env}         # resolved by os.environ/MODEL_NAME in litellm_config.yaml
+      - LITELLM_MODEL=${LITELLM_MODEL:?LITELLM_MODEL must be set in .env} # resolved by os.environ/LITELLM_MODEL in litellm_config.yaml
+      - LITELLM_LOCAL_MODEL_COST_MAP=True  # skip remote fetch; backend network has no internet access
     volumes:
       - ./litellm_config.yaml:/app/config.yaml:ro   # read-only mount; changes require a container restart
     networks:
@@ -83,7 +88,6 @@ services:
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
     tmpfs:
       - /tmp:size=256m                   # scratch space on RAM for temporary files
-    read_only: true                      # immutable rootfs; only /tmp (tmpfs) is writable
     security_opt:
       - no-new-privileges:true           # blocks setuid/setgid privilege escalation
     cap_drop:

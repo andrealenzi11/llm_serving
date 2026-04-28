@@ -32,7 +32,7 @@ litellm_settings:
   request_timeout: 600                 # global fallback timeout (seconds) when a model entry omits its own
   json_logs: true                      # structured JSON logs for easier parsing by log aggregators (Loki, ELK)
   drop_params: true                    # silently discard unsupported params (e.g. logprobs) instead of returning 400
-  set_verbose: false                   # keep off in production — when true, full prompts are written to logs
+  set_verbose: true                   # keep off in production — when true, full prompts are written to logs
   redact_messages_in_exceptions: true  # strip prompt content from error messages and tracebacks
   max_parallel_requests: 4             # concurrency gate: max requests forwarded to vLLM simultaneously
   cache: true                          # enable in-memory response cache; identical requests skip the GPU entirely

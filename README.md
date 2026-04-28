@@ -25,7 +25,7 @@ Designed for security, reliability, and ease of maintenance in production enviro
 
 | Service | Image | Role |
 |---------|-------|------|
-| **vLLM** | `vllm/vllm-openai:v0.19.1-cu130` | **OpenAI-compatible inference engine** serving the model set by `HF_MODEL_ID` in BF16 with prefix caching. No published port — reachable only by LiteLLM via the internal `backend` network. |
+| **vLLM** | `vllm/vllm-openai:v0.19.1-cu130` | **OpenAI-compatible inference engine** serving the model set by `HF_MODEL_ID` in NVFP4 with prefix caching. No published port — reachable only by LiteLLM via the internal `backend` network. |
 | **LiteLLM** | `ghcr.io/berriai/litellm:v1.83.10-stable` | **API gateway** on port `4000`. Handles bearer-token authentication (`LITELLM_MASTER_KEY`), per-model concurrency gating (`max_parallel_requests: 4`), in-memory response caching (1 h TTL), and structured JSON logging with Docker log rotation. External access is rate-limited by the `DOCKER-USER` iptables chain. |
 
 ### Network isolation
@@ -43,7 +43,7 @@ LiteLLM is attached **only** to `backend`, so even a compromised gateway process
 
 - Docker Engine ≥ 24 with the Compose plugin
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) installed and configured
-- A HuggingFace account with the [Gemma 4 licence](https://huggingface.co/google/gemma-4-31b-it) accepted
+- A HuggingFace account with access to [nvidia/Gemma-4-31B-IT-NVFP4](https://huggingface.co/nvidia/Gemma-4-31B-IT-NVFP4) accepted
 
 ---
 
@@ -212,9 +212,9 @@ sudo fail2ban-client status sshd
    | Variable | Description |
    |----------|-------------|
    | `COMPOSE_PROJECT_NAME` | Fixed project name (`llm_serving`). Ensures volume/network names are stable regardless of clone path — protects the model cache from accidental re-download. |
-   | `HF_MODEL_ID` | Full HuggingFace model path (e.g. `google/gemma-4-31b-it`). vLLM downloads and loads this model. |
-   | `MODEL_NAME` | Short served-model name exposed in the API (e.g. `gemma-4-31b`). Clients use this in the `"model"` field of requests. |
-   | `LITELLM_MODEL` | LiteLLM routing key — must be `openai/` + `MODEL_NAME` (e.g. `openai/gemma-4-31b`). The `openai/` prefix tells LiteLLM to use the OpenAI-compatible protocol. |
+   | `HF_MODEL_ID` | Full HuggingFace model path (e.g. `nvidia/Gemma-4-31B-IT-NVFP4`). vLLM downloads and loads this model. |
+   | `MODEL_NAME` | Short served-model name exposed in the API (e.g. `gemma-4-31b-nvfp4`). Clients use this in the `"model"` field of requests. |
+   | `LITELLM_MODEL` | LiteLLM routing key — must be `openai/` + `MODEL_NAME` (e.g. `openai/gemma-4-31b-nvfp4`). The `openai/` prefix tells LiteLLM to use the OpenAI-compatible protocol. |
    | `HF_TOKEN` | HuggingFace access token (required to download gated models — accept the model licence first). |
    | `LITELLM_MASTER_KEY` | Bearer token clients send to authenticate with the gateway. Generate with: `python3 -c "import secrets; print('sk-' + secrets.token_urlsafe(32))"` |
    | `VLLM_API_KEY` | Internal key for LiteLLM → vLLM authentication (defense-in-depth, even on the internal network). Generate with: `python3 -c "import secrets; print('vllm-' + secrets.token_urlsafe(32))"` |
@@ -298,7 +298,8 @@ Both containers are hardened beyond Docker defaults:
 | Parameter | Default | Notes |
 |-----------|---------|-------|
 | `--model` | `${HF_MODEL_ID}` | Full HuggingFace model path. Set `HF_MODEL_ID` in `.env`; update `MODEL_NAME` and `LITELLM_MODEL` to match. |
-| `--dtype` | `bfloat16` | Weight precision. BF16 is the native training format for Gemma 4. |
+| `--dtype` | `auto` | Weight precision. `auto` lets vLLM detect the NVFP4 quantization from the model config automatically. |
+| `--quantization` | `nvfp4` | Explicitly selects NVIDIA FP4 quantization for `nvidia/Gemma-4-31B-IT-NVFP4`. Reduces VRAM usage from ~62 GB (BF16) to ~16 GB. |
 | `--max-model-len` | `8192` | Context window in tokens. Can be raised (e.g. `32768`, `131072`) at the cost of higher VRAM usage. |
 | `--gpu-memory-utilization` | `0.90` | Fraction of VRAM vLLM pre-allocates for KV cache. |
 | `--enable-prefix-caching` | enabled | Caches common prompt prefixes in GPU memory to avoid recomputation. |
@@ -325,7 +326,7 @@ Both containers are hardened beyond Docker defaults:
 # Stop the stack (preserves volumes)
 docker compose down
 
-# Stop and delete the ~60 GB model cache (forces re-download on next start)
+# Stop and delete the ~16 GB model cache (forces re-download on next start)
 docker compose down -v
 
 # Pull latest images and restart
