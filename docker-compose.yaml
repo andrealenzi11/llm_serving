@@ -1,6 +1,6 @@
 # ============================================================
 # llm_serving – Docker Compose stack
-# Gemma 4 31B served via vLLM + LiteLLM gateway
+# Open-weights model served via vLLM + LiteLLM gateway
 # ============================================================
 
 services:
@@ -11,14 +11,14 @@ services:
   vllm:
     image: vllm/vllm-openai:v0.20.0-cu130
     container_name: vllm
-    shm_size: "16g"                      # NCCL shared memory; avoids the security risk of ipc:host
+    shm_size: "${VLLM_SHM_SIZE:-16g}"    # NCCL shared memory; increase proportionally with VLLM_TENSOR_PARALLEL_ARG (e.g. 32g for 2 GPUs)
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:?HF_TOKEN must be set in .env}
       - VLLM_API_KEY=${VLLM_API_KEY:?VLLM_API_KEY must be set in .env}
       - TORCHINDUCTOR_CACHE_DIR=/root/.cache/vllm/torchinductor
       - TRITON_CACHE_DIR=/root/.cache/vllm/triton
     volumes:
-      - hf-cache:/root/.cache/huggingface    # persist the ~16 GB model weights across container restarts
+      - hf-cache:/root/.cache/huggingface    # persist the model weights across container restarts
       - vllm-compile-cache:/root/.cache/vllm # persist JIT caches and keep executable artifacts off /tmp
     networks:
       - backend                          # isolated bridge for vLLM ↔ LiteLLM traffic only
@@ -37,12 +37,14 @@ services:
     command: >-
       ${HF_MODEL_ID}
       --served-model-name ${MODEL_NAME}
-      --dtype auto
-      --quantization nvfp4
-      --max-model-len 8192
-      --max-num-batched-tokens 8192
-      --gpu-memory-utilization 0.82
-      --enable-prefix-caching
+      --dtype ${VLLM_DTYPE:-auto}
+      ${VLLM_QUANTIZATION_ARG:-}
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-8192}
+      --max-num-batched-tokens ${VLLM_MAX_NUM_BATCHED_TOKENS:-8192}
+      --max-num-seqs ${VLLM_MAX_NUM_SEQS:-256}
+      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.82}
+      ${VLLM_TENSOR_PARALLEL_ARG:-}
+      ${VLLM_ENABLE_PREFIX_CACHING:-}
     ulimits:
       nofile:
         soft: 65536
@@ -86,7 +88,7 @@ services:
     networks:
       - frontend                        # non-internal bridge; required for Docker to wire up the host-port NAT rule (ports: 4000)
       - backend                         # isolated bridge for vLLM ↔ LiteLLM traffic
-    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "${LITELLM_NUM_WORKERS:-2}"]
     tmpfs:
       - /tmp:size=256m                   # scratch space on RAM for temporary files
     security_opt:

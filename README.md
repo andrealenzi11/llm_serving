@@ -8,34 +8,57 @@ Designed for security, reliability, and ease of maintenance in production enviro
 ## Architecture
 
 ```
-                  ┌─────────────────────────────────────────────────────┐
-                  │  Docker host                                        │
-                  │                                                     │
- Clients ────►  :4000 ──► LiteLLM ──────backend (internal)──────► vLLM │
-                  │       (gateway)      172.30.0.0/24          (GPU)  │
-                  │                                                     │
-                  │                      egress (non-internal)          │
-                  │                      172.30.1.0/24                  │
-                  │                          │                          │
-                  └──────────────────────────┼──────────────────────────┘
-                                             │
-                                     HuggingFace Hub
-                                   (model weight downloads)
+                  ┌─────────────────────────────────────────────────────────┐
+                  │  Docker host                                            │
+                  │                                                         │
+ Clients ────►  :4000 ──► LiteLLM ──────backend (internal)──────► vLLM      │
+                  │      frontend          172.30.0.0/24         (GPU)      │
+                  │    (non-internal)                              |        │
+                  |    172.30.2.0/24                               |        │
+                  │                                             egress      |
+                  |                                         (non-internal)  │
+                  │                                        172.30.1.0/24    │
+                  │                                                │        │
+                  └────────────────────────────────────────────────┼────────┘
+                                                                   │
+                                                             HuggingFace Hub
+                                                       (model weight downloads)
 ```
 
 | Service | Image | Role |
 |---------|-------|------|
-| **vLLM** | `vllm/vllm-openai:v0.20.0-cu130` | **OpenAI-compatible inference engine** serving the model set by `HF_MODEL_ID` in NVFP4 with prefix caching. No published port — reachable only by LiteLLM via the internal `backend` network. |
+| **vLLM** | `vllm/vllm-openai:v0.20.0-cu130` | **OpenAI-compatible inference engine** serving the model set by `HF_MODEL_ID` with optional quantization and prefix caching. No published port — reachable only by LiteLLM via the internal `backend` network. |
 | **LiteLLM** | `ghcr.io/berriai/litellm:v1.83.10-stable` | **API gateway** on port `4000`. Handles bearer-token authentication (`LITELLM_MASTER_KEY`), per-model concurrency gating (`max_parallel_requests: 4`), in-memory response caching (1 h TTL), and structured JSON logging with Docker log rotation. External access is rate-limited by the `DOCKER-USER` iptables chain. |
 
 ### Network isolation
 
 | Network | Subnet | `internal` | Members | Purpose |
 |---------|--------|------------|---------|---------|
-| `backend` | `172.30.0.0/24` | yes | vLLM, LiteLLM | Private bridge with no default gateway — containers cannot reach the internet. |
+| `frontend` | `172.30.2.0/24` | no | LiteLLM | Non-internal bridge required for Docker to wire the host-port `4000` NAT rule. |
+| `backend` | `172.30.0.0/24` | yes | vLLM, LiteLLM | Internal bridge with no default gateway — containers cannot initiate internet connections through it. |
 | `egress` | `172.30.1.0/24` | no | vLLM | Non-internal bridge — allows vLLM to download model weights from HuggingFace. |
 
-LiteLLM is attached **only** to `backend`, so even a compromised gateway process cannot make outbound connections.
+LiteLLM is attached to `backend` (to reach vLLM) and to `frontend` (for the published-port NAT rule). vLLM is attached to `backend` and `egress`. LiteLLM has no `egress` attachment, limiting its outbound reach to what the host firewall allows.
+
+---
+
+## Project structure
+
+```
+.
+├── conf/                  # configuration files for different environments
+│   ├── .env                   # secrets (not committed — created from conf/.env.example)
+│   └── .env.example           # template for all required and optional env variables
+├── scripts/               # utility scripts for setup and maintenance
+│   ├── download_model.sh      # utility to download model weights into the Docker volume
+│   └── firewall.sh            # UFW + iptables DOCKER-USER chain setup
+├── .gitignore             # ignores .env and other sensitive/generated files
+├── docker-compose.yaml    # service orchestration (vLLM + LiteLLM, networks, volumes)
+├── LICENSE                # project license
+├── litellm_config.yaml    # LiteLLM routing, concurrency, caching, logging
+├── README.md              # this file
+└── version.txt            # project version
+```
 
 ---
 
@@ -43,7 +66,7 @@ LiteLLM is attached **only** to `backend`, so even a compromised gateway process
 
 - Docker Engine ≥ 24 with the Compose plugin
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) installed and configured
-- A HuggingFace account with access to [nvidia/Gemma-4-31B-IT-NVFP4](https://huggingface.co/nvidia/Gemma-4-31B-IT-NVFP4) accepted
+- A HuggingFace account with access to your target model accepted (for gated repos)
 
 ---
 
@@ -125,7 +148,7 @@ docker run --rm --gpus all nvidia/cuda:13.0.3-base-ubuntu24.04 nvidia-smi
 The server uses **UFW** as the frontend and **iptables** as the backend. Because Docker manipulates `iptables` directly (bypassing UFW), the script also inserts rules in the `DOCKER-USER` chain to control access to published container ports.
 
 ```bash
-sudo bash firewall.sh
+sudo bash scripts/firewall.sh
 ```
 
 What the script does:
@@ -202,55 +225,85 @@ sudo fail2ban-client status sshd
 
 ## Quick start
 
-1. **Configure secrets** — copy the template and fill in the values:
+#### 1. **Configure secrets** 
 
-   ```bash
-   cp .env.example .env   # or edit .env directly
-   chmod 600 .env          # restrict to owner-only (file contains secrets)
-   ```
+Copy the template and fill in the values:
+```bash
+cp conf/.env.example conf/.env   # or edit conf/.env directly
+chmod 600 conf/.env               # restrict to owner-only (file contains secrets)
+```
 
-   | Variable | Description |
-   |----------|-------------|
-   | `COMPOSE_PROJECT_NAME` | Fixed project name (`llm_serving`). Ensures volume/network names are stable regardless of clone path — protects the model cache from accidental re-download. |
-   | `HF_MODEL_ID` | Full HuggingFace model path (e.g. `nvidia/Gemma-4-31B-IT-NVFP4`). vLLM downloads and loads this model. |
-   | `MODEL_NAME` | Short served-model name exposed in the API (e.g. `gemma-4-31b-nvfp4`). Clients use this in the `"model"` field of requests. |
-   | `LITELLM_MODEL` | LiteLLM routing key — must be `openai/` + `MODEL_NAME` (e.g. `openai/gemma-4-31b-nvfp4`). The `openai/` prefix tells LiteLLM to use the OpenAI-compatible protocol. |
-   | `HF_TOKEN` | HuggingFace access token (required to download gated models — accept the model licence first). |
-   | `LITELLM_MASTER_KEY` | Bearer token clients send to authenticate with the gateway. Generate with: `python3 -c "import secrets; print('sk-' + secrets.token_urlsafe(32))"` |
-   | `VLLM_API_KEY` | Internal key for LiteLLM → vLLM authentication (defense-in-depth, even on the internal network). Generate with: `python3 -c "import secrets; print('vllm-' + secrets.token_urlsafe(32))"` |
+**Model configuration** (update all three together when switching models):
 
-2. **Set up the firewall** (before exposing any ports):
-   ```bash
-   sudo bash firewall.sh
-   ```
+| Variable | Description |
+|----------|-------------|
+| `COMPOSE_PROJECT_NAME` | Fixed project name (`llm_serving`). Ensures volume/network names are stable regardless of clone path — protects the model cache from accidental re-download. |
+| `HF_MODEL_ID` | Full HuggingFace model path (e.g. `org/model-name`). vLLM downloads and loads this model. |
+| `MODEL_NAME` | Short served-model name exposed in the API (e.g. `my-model`). Clients use this in the `"model"` field of requests. |
+| `LITELLM_MODEL` | LiteLLM routing key — must be `openai/` + `MODEL_NAME` (e.g. `openai/my-model`). The `openai/` prefix tells LiteLLM to use the OpenAI-compatible protocol. |
 
-3. **(Optional) Pre-download model weights** into the Docker volume to avoid the initial startup delay:
-   ```bash
-   ./download_model.sh
-   ```
-    This script runs a temporary container with the same configuration as vLLM, mounts the `hf-cache` volume, and downloads the model weights using the HuggingFace API. The weights are stored in the volume, so when you start the stack normally, vLLM loads them from local storage instead of downloading again. This is especially useful for large models like Gemma 4 (31B), which can take several minutes to download and load on the first run.
+**Credentials** (required):
 
-4. **Start the stack:**
-   ```bash
-   docker compose up -d
-   ```
+| Variable | Description |
+|----------|-------------|
+| `HF_TOKEN` | HuggingFace access token (required for gated models — accept the model licence first). |
+| `LITELLM_MASTER_KEY` | Bearer token clients send to authenticate with the gateway. Generate with: `python3 -c "import secrets; print('sk-' + secrets.token_urlsafe(32))"` |
+| `VLLM_API_KEY` | Internal key for LiteLLM → vLLM authentication (defense-in-depth, even on the internal network). Generate with: `python3 -c "import secrets; print('vllm-' + secrets.token_urlsafe(32))"` |
 
-5. **Verify health:**
-   ```bash
-   docker compose ps          # both services should show "healthy"
-   docker compose logs -f     # watch startup progress (model loading takes several minutes)
-   ```
+**vLLM inference parameters** (optional — defaults shown):
 
-6. **Test a request:**
-   ```bash
-   curl http://localhost:4000/v1/chat/completions \
-     -H "Authorization: Bearer <LITELLM_MASTER_KEY>" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "model": "<MODEL_NAME>",
-       "messages": [{"role": "user", "content": "Hello!"}]
-     }'
-   ```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VLLM_DTYPE` | `auto` | Weight and activation dtype (`auto`, `float16`, `bfloat16`, `float32`). |
+| `VLLM_QUANTIZATION_ARG` | `--quantization nvfp4` | Full flag passed to vLLM; set to empty to disable quantization. |
+| `VLLM_MAX_MODEL_LEN` | `8192` | Maximum context length in tokens (prompt + generation). |
+| `VLLM_MAX_NUM_BATCHED_TOKENS` | `8192` | Maximum total tokens across all concurrent sequences in one scheduler step. |
+| `VLLM_MAX_NUM_SEQS` | `256` | Maximum number of sequences processed concurrently. |
+| `VLLM_GPU_MEMORY_UTILIZATION` | `0.82` | Fraction of GPU HBM reserved for the KV cache (`0.0`–`1.0`). |
+| `VLLM_TENSOR_PARALLEL_ARG` | _(empty)_ | Set to `--tensor-parallel-size <n>` for multi-GPU; leave empty for single-GPU. |
+| `VLLM_ENABLE_PREFIX_CACHING` | `--enable-prefix-caching` | Set to empty to disable prefix caching. |
+| `VLLM_SHM_SIZE` | `16g` | Shared memory for NCCL; scale proportionally with tensor parallelism degree. |
+
+**LiteLLM gateway parameters** (optional — defaults shown):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LITELLM_NUM_WORKERS` | `2` | Number of Uvicorn worker processes; increase for higher request concurrency. |
+
+#### 2. **Set up the firewall** (before exposing any ports):
+```bash
+sudo bash scripts/firewall.sh
+```
+
+#### 3. **(Optional) Pre-download model weights** 
+
+Download model weights from HuggingFace into the Docker volume to avoid the initial startup delay:
+```bash
+./scripts/download_model.sh
+```
+
+
+#### 4. **Start the stack:**
+```bash
+docker compose --env-file conf/.env up -d
+```
+
+#### 5. **Verify health:**
+```bash
+docker compose --env-file conf/.env ps      # both services should show "healthy"
+docker compose --env-file conf/.env logs -f # watch startup progress
+```
+
+#### 6. **Test a request:**
+```bash
+curl http://localhost:4000/v1/chat/completions \
+  -H "Authorization: Bearer <LITELLM_MASTER_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<MODEL_NAME>",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
 
 ---
 
@@ -273,24 +326,6 @@ Both containers are hardened beyond Docker defaults:
 
 ---
 
-## Project structure
-
-```
-.
-├── .env                   # secrets (not committed — created from .env.example)
-├── .env.example           # template with key-generation commands
-├── .gitignore             # ignores .env and other sensitive/generated files
-├── docker-compose.yaml    # service orchestration (vLLM + LiteLLM, networks, volumes)
-├── download_model.sh      # utility to pre-download model weights into the Docker volume
-├── firewall.sh            # UFW + iptables DOCKER-USER chain setup
-├── LICENSE                # project license
-├── litellm_config.yaml    # LiteLLM routing, concurrency, caching, logging
-├── README.md              # this file
-└── version.txt            # project version
-```
-
----
-
 ## Configuration notes
 
 ### vLLM (inference engine)
@@ -298,8 +333,8 @@ Both containers are hardened beyond Docker defaults:
 | Parameter | Default | Notes |
 |-----------|---------|-------|
 | `--model` | `${HF_MODEL_ID}` | Full HuggingFace model path. Set `HF_MODEL_ID` in `.env`; update `MODEL_NAME` and `LITELLM_MODEL` to match. |
-| `--dtype` | `auto` | Weight precision. `auto` lets vLLM detect the NVFP4 quantization from the model config automatically. |
-| `--quantization` | `nvfp4` | Explicitly selects NVIDIA FP4 quantization for `nvidia/Gemma-4-31B-IT-NVFP4`. Reduces VRAM usage from ~62 GB (BF16) to ~16 GB. |
+| `--dtype` | `auto` | Weight precision. `auto` lets vLLM infer an appropriate dtype from model metadata. |
+| `--quantization` | `nvfp4` | Selects quantization mode when supported by the chosen model. Reduces VRAM usage compared with full-precision variants. |
 | `--max-model-len` | `8192` | Context window in tokens. Can be raised (e.g. `32768`, `131072`) at the cost of higher VRAM usage. |
 | `--gpu-memory-utilization` | `0.90` | Fraction of VRAM vLLM pre-allocates for KV cache. |
 | `--enable-prefix-caching` | enabled | Caches common prompt prefixes in GPU memory to avoid recomputation. |
@@ -324,24 +359,24 @@ Both containers are hardened beyond Docker defaults:
 
 ```bash
 # Stop the stack (preserves volumes)
-docker compose down
+docker compose --env-file conf/.env down
 
 # Stop and delete the ~16 GB model cache (forces re-download on next start)
-docker compose down -v
+docker compose --env-file conf/.env down -v
 
 # Pull latest images and restart
-docker compose pull && docker compose up -d
+docker compose --env-file conf/.env pull && docker compose --env-file conf/.env up -d
 
 # Follow logs for a specific service
-docker compose logs -f litellm
-docker compose logs -f vllm
+docker compose --env-file conf/.env logs -f litellm
+docker compose --env-file conf/.env logs -f vllm
 
 # Check container resource usage
 docker stats --no-stream
 
 # Re-apply firewall rules after manual changes
-sudo bash firewall.sh
+sudo bash scripts/firewall.sh
 
 # Re-apply only the DOCKER-USER iptables rules (same as the systemd drop-in)
-sudo bash firewall.sh --docker-user-only
+sudo bash scripts/firewall.sh --docker-user-only
 ```
