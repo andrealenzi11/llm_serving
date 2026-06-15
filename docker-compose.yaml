@@ -9,7 +9,7 @@ services:
   # vLLM – GPU inference engine (no published port)
   # ----------------------------------------------------------
   vllm:
-    image: vllm/vllm-openai:v0.20.0-cu130
+    image: vllm/vllm-openai:v0.23.0
     container_name: vllm
     shm_size: "${VLLM_SHM_SIZE:-16g}"    # NCCL shared memory; increase proportionally with VLLM_TENSOR_PARALLEL_ARG (e.g. 32g for 2 GPUs)
     environment:

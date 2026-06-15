@@ -27,7 +27,7 @@ This project is ideal for developers and organizations looking to deploy and ser
 ### Services
 | Service     | Image                                     | Role |
 |-------------|-------------------------------------------|------|
-| **vLLM**    | `vllm/vllm-openai:v0.20.0-cu130`          | **OpenAI-compatible inference engine** serving the model set by `HF_MODEL_ID` with optional quantization and prefix caching. No published port — reachable only by LiteLLM via the internal `backend` network. |
+| **vLLM**    | `vllm/vllm-openai:v0.23.0-cu130`          | **OpenAI-compatible inference engine** serving the model set by `HF_MODEL_ID` with optional quantization and prefix caching. No published port — reachable only by LiteLLM via the internal `backend` network. |
 | **LiteLLM** | `ghcr.io/berriai/litellm:v1.88.2` | **API gateway** on port `4000`. Handles bearer-token authentication (`LITELLM_MASTER_KEY`), per-model concurrency gating (`max_parallel_requests: 4`), in-memory response caching (1 h TTL), and structured JSON logging with Docker log rotation. External access is rate-limited by the `DOCKER-USER` iptables chain. |
 
 ### Networks
