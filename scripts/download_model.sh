@@ -15,8 +15,9 @@ set -euo pipefail
 
 # ===== Constants ===== #
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly ENV_FILE="${SCRIPT_DIR}/.env"
-readonly COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yaml"
+readonly PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly ENV_FILE="${PROJECT_DIR}/conf/.env"
+readonly COMPOSE_FILE="${PROJECT_DIR}/docker-compose.yaml"
 readonly DOWNLOADER_CONTAINER="hf-downloader"
 # Parallel shard downloads; increase on high-bandwidth connections
 readonly HF_MAX_WORKERS=4

@@ -27,6 +27,10 @@ logs/
 *.out
 *.err
 
+# --- Draft reports (may contain deployment notes / credentials) ---
+server_private_report.md
+server_info.txt
+
 # --- Shell / Bash artifacts ---
 *.bash_history
 .bash_history
@@ -93,7 +97,3 @@ coverage/
 # --- Generated local data mounts ---
 data/
 volumes/
-
-# --- Personal notes / scratch files ---
-report.md
-
