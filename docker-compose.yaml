@@ -36,8 +36,8 @@ services:
     memswap_limit: 120g                # equal to memory limit = swap disabled; GPU workloads degrade severely on swap
     command: >-
       ${HF_MODEL_ID}
-      --served-model-name ${MODEL_NAME}
-      --dtype ${VLLM_DTYPE:-auto}
+      --served-model-name=${MODEL_NAME}
+      ${VLLM_DTYPE_ARG:-}
       ${VLLM_QUANTIZATION_ARG:-}
       ${VLLM_ENABLE_PREFIX_CACHING:-}
       ${VLLM_ENABLE_CHUNKED_PREFILL:-}
@@ -45,10 +45,10 @@ services:
       ${VLLM_ENABLE_AUTO_TOOL_CHOICE:-}
       ${VLLM_TOOL_CALL_PARSER_ARG:-}
       ${VLLM_REASONING_PARSER_ARG:-}
-      --max-model-len ${VLLM_MAX_MODEL_LEN:-8192}
-      --max-num-batched-tokens ${VLLM_MAX_NUM_BATCHED_TOKENS:-8192}
-      --max-num-seqs ${VLLM_MAX_NUM_SEQS:-256}
-      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.82}
+      ${VLLM_MAX_MODEL_LEN_ARG:-}
+      ${VLLM_MAX_NUM_BATCHED_TOKENS_ARG:-}
+      ${VLLM_MAX_NUM_SEQS_ARG:-}
+      ${VLLM_GPU_MEMORY_UTILIZATION_ARG:-}
       ${VLLM_TENSOR_PARALLEL_ARG:-}
       ${VLLM_KV_CACHE_DTYPE_ARG:-}
       ${VLLM_ATTENTION_BACKEND_ARG:-}
