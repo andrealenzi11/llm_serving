@@ -42,6 +42,7 @@ services:
       ${VLLM_ENABLE_PREFIX_CACHING:-}
       ${VLLM_ENABLE_CHUNKED_PREFILL:-}
       ${VLLM_LANGUAGE_MODEL_ONLY:-}
+      ${VLLM_LIMIT_MM_PER_PROMPT_ARG:-}
       ${VLLM_ENABLE_AUTO_TOOL_CHOICE:-}
       ${VLLM_TOOL_CALL_PARSER_ARG:-}
       ${VLLM_REASONING_PARSER_ARG:-}
@@ -57,6 +58,7 @@ services:
       ${VLLM_LOAD_FORMAT_ARG:-}
       ${VLLM_TRUST_REMOTE_CODE:-}
       ${VLLM_SPECULATIVE_CONFIG_ARG:-}
+      ${VLLM_COMPILATION_CONFIG_ARG:-}
     ulimits:
       nofile:
         soft: 65536
