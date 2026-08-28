@@ -27,8 +27,8 @@ This project is ideal for developers and organizations looking to deploy and ser
 ### Services
 | Service     | Image                                     | Role |
 |-------------|-------------------------------------------|------|
-| **vLLM**    | `vllm/vllm-openai:v0.23.0`                | **OpenAI-compatible inference engine** serving the model set by `HF_MODEL_ID` with optional quantization and prefix caching. No published port — reachable only by LiteLLM via the internal `backend` network. |
-| **LiteLLM** | `ghcr.io/berriai/litellm:v1.88.2` | **API gateway** on port `4000`. Handles bearer-token authentication (`LITELLM_MASTER_KEY`), per-model concurrency gating (`max_parallel_requests: 4`), in-memory response caching (1 h TTL), and structured JSON logging with Docker log rotation. External access is rate-limited by the `DOCKER-USER` iptables chain. |
+| **vLLM**    | `vllm/vllm-openai:v0.28.0`                | **OpenAI-compatible inference engine** serving the model set by `HF_MODEL_ID` with optional quantization and prefix caching. No published port — reachable only by LiteLLM via the internal `backend` network. |
+| **LiteLLM** | `ghcr.io/berriai/litellm:v1.98.0` | **API gateway** on port `4000`. Handles bearer-token authentication (`LITELLM_MASTER_KEY`), per-model concurrency gating (`max_parallel_requests: 4`), in-memory response caching (1 h TTL), and structured JSON logging with Docker log rotation. External access is rate-limited by the `DOCKER-USER` iptables chain. |
 
 ### Networks
 | Network    | Subnet          | internal   | Members       | Purpose |
@@ -72,11 +72,11 @@ This project is ideal for developers and organizations looking to deploy and ser
 - Docker Engine 24.0+
 - NVIDIA Driver 580.159.03
 - CUDA 13.0
-- vLLM 0.23.0
-- LiteLLM 1.88.2
+- vLLM 0.28.0
+- LiteLLM 1.98.0
 
 #### LLM:
-- nvidia/Qwen3.6-35B-A3B-NVFP4
+- Qwen/Qwen3.8-27B-FP8
 
 
 ## Prerequisites
@@ -121,12 +121,12 @@ Every vLLM variable stores the complete CLI flag (`--flag=value` or `--flag`). L
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VLLM_DTYPE_ARG` | `--dtype=auto` | Weight and activation dtype. Common values: `auto`, `float16`, `bfloat16`, `float32`. |
-| `VLLM_QUANTIZATION_ARG` | `--quantization=modelopt` | Quantization method. NVIDIA NVFP4 checkpoints require `modelopt`. Leave empty to disable. |
+| `VLLM_QUANTIZATION_ARG` | _(empty)_ | Quantization method (e.g. `fp8`, `modelopt`). Leave empty for checkpoints (like FP8) that declare `quant_method` in their own `config.json` — vLLM auto-detects it. |
 | `VLLM_ENABLE_PREFIX_CACHING` | `--enable-prefix-caching` | Reuses KV cache across requests with shared prefixes. Leave empty to disable. |
 | `VLLM_ENABLE_CHUNKED_PREFILL` | `--enable-chunked-prefill` | Splits long prefill phases into chunks, improving latency under concurrent load. Leave empty to disable. |
 | `VLLM_LANGUAGE_MODEL_ONLY` | _(empty)_ | Set to `--language-model-only` to skip the vision encoder on multimodal models (text-only deployments). |
 | `VLLM_ENABLE_AUTO_TOOL_CHOICE` | `--enable-auto-tool-choice` | Allows the model to invoke tools autonomously. Leave empty to disable. |
-| `VLLM_TOOL_CALL_PARSER_ARG` | `--tool-call-parser=qwen3_xml` | Tool call output parser. Common values: `gemma4`, `hermes`, `mistral`, `llama3_json`, `qwen3_xml`. |
+| `VLLM_TOOL_CALL_PARSER_ARG` | `--tool-call-parser=qwen3_coder` | Tool call output parser. Common values: `gemma4`, `hermes`, `mistral`, `llama3_json`, `qwen3_xml`, `qwen3_coder`. |
 | `VLLM_REASONING_PARSER_ARG` | `--reasoning-parser=qwen3` | Extracts `<think>…</think>` reasoning blocks. Common values: `qwen3`, `deepseek_r1`. |
 | `VLLM_MAX_MODEL_LEN_ARG` | `--max-model-len=262144` | Maximum context length in tokens (prompt + generation). |
 | `VLLM_MAX_NUM_BATCHED_TOKENS_ARG` | `--max-num-batched-tokens=8192` | Maximum total tokens across all concurrent sequences in one scheduler step. |
@@ -136,7 +136,7 @@ Every vLLM variable stores the complete CLI flag (`--flag=value` or `--flag`). L
 | `VLLM_SHM_SIZE` | `16g` | Shared memory for NCCL; scale proportionally with tensor parallelism degree. |
 | `VLLM_KV_CACHE_DTYPE_ARG` | `--kv-cache-dtype=fp8` | KV cache data type. Set to `fp8` to halve KV cache memory on Blackwell GPUs. Leave empty to disable. |
 | `VLLM_ATTENTION_BACKEND_ARG` | `--attention-backend=flashinfer` | Attention kernel backend optimized for Blackwell. Leave empty for default. |
-| `VLLM_MOE_BACKEND_ARG` | `--moe-backend=marlin` | MoE dispatch backend optimized for Blackwell. Leave empty for default. |
+| `VLLM_MOE_BACKEND_ARG` | _(empty)_ | MoE dispatch backend optimized for Blackwell (e.g. `marlin`). Only applies to MoE models; leave empty for dense models. |
 | `VLLM_ASYNC_SCHEDULING` | `--async-scheduling` | Overlaps request scheduling with GPU execution. Leave empty to disable. |
 | `VLLM_LOAD_FORMAT_ARG` | `--load-format=fastsafetensors` | Faster model weight loading. Leave empty for default. |
 | `VLLM_TRUST_REMOTE_CODE` | `--trust-remote-code` | Allows model-supplied custom code. Leave empty to disable. |
@@ -145,7 +145,7 @@ Every vLLM variable stores the complete CLI flag (`--flag=value` or `--flag`). L
 #### LiteLLM Gateway:
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LITELLM_NUM_WORKERS` | `2` | Number of Uvicorn worker processes; increase for higher request concurrency. |
+| `LITELLM_NUM_WORKERS` | `1` | Number of Uvicorn worker processes. Keep at `1` unless `litellm_config.yaml`'s cache is moved off the in-process `local` backend — otherwise each worker holds its own cache and hit rate degrades silently. |
 
 
 ### 2. Pre-download model weights
@@ -204,12 +204,12 @@ Both containers are hardened beyond Docker defaults:
 |-----------|---------|-------|
 | `--model` | `${HF_MODEL_ID}` | Full HuggingFace model path. Set `HF_MODEL_ID` in `.env`; update `MODEL_NAME` and `LITELLM_MODEL` to match. |
 | `--dtype` | `auto` | Weight precision. `auto` lets vLLM infer an appropriate dtype from model metadata. Set via `VLLM_DTYPE_ARG`. |
-| `--quantization` | `modelopt` | Selects quantization mode when supported by the chosen model (NVIDIA NVFP4 checkpoints require `modelopt`). Set via `VLLM_QUANTIZATION_ARG`. |
+| `--quantization` | disabled | Selects quantization mode when the checkpoint doesn't declare it itself. The current FP8 checkpoint sets `quant_method` in `config.json`, so vLLM auto-detects it — leave `VLLM_QUANTIZATION_ARG` empty. |
 | `--enable-prefix-caching` | enabled | Caches common prompt prefixes in GPU memory to avoid recomputation. Set via `VLLM_ENABLE_PREFIX_CACHING`. |
 | `--enable-chunked-prefill` | enabled | Splits long prefill phases into chunks, reducing head-of-line blocking under concurrent load. Set via `VLLM_ENABLE_CHUNKED_PREFILL`. |
 | `--language-model-only` | disabled | Skips the vision encoder on multimodal models for text-only deployments. Set via `VLLM_LANGUAGE_MODEL_ONLY`. |
 | `--enable-auto-tool-choice` | enabled | Permits the model to call tools autonomously. Set via `VLLM_ENABLE_AUTO_TOOL_CHOICE`. |
-| `--tool-call-parser` | `qwen3_xml` | Parser for structured tool call output. Set via `VLLM_TOOL_CALL_PARSER_ARG` (e.g. `qwen3_xml`, `hermes`, `llama3_json`). |
+| `--tool-call-parser` | `qwen3_coder` | Parser for structured tool call output. Set via `VLLM_TOOL_CALL_PARSER_ARG` (e.g. `qwen3_coder`, `qwen3_xml`, `hermes`, `llama3_json`). |
 | `--reasoning-parser` | `qwen3` | Extracts `<think>…</think>` reasoning blocks from output. Set via `VLLM_REASONING_PARSER_ARG` (e.g. `qwen3`, `deepseek_r1`). |
 | `--max-model-len` | `262144` | Context window in tokens. Can be raised (e.g. `32768`, `131072`) at the cost of higher VRAM usage. Set via `VLLM_MAX_MODEL_LEN_ARG`. |
 | `--max-num-batched-tokens` | `8192` | Maximum total tokens across all concurrent sequences in one scheduler step. Set via `VLLM_MAX_NUM_BATCHED_TOKENS_ARG`. |
@@ -217,7 +217,7 @@ Both containers are hardened beyond Docker defaults:
 | `--gpu-memory-utilization` | `0.60` | Fraction of VRAM vLLM pre-allocates for KV cache. The GB10 uses unified memory — set to `0.60` to avoid starving the OS. Set via `VLLM_GPU_MEMORY_UTILIZATION_ARG`. |
 | `--kv-cache-dtype` | `fp8` | Data type for the KV cache. Set to `fp8` via `VLLM_KV_CACHE_DTYPE_ARG` to halve KV cache memory on Blackwell GPUs. |
 | `--attention-backend` | `flashinfer` | Attention kernel backend. Set to `flashinfer` via `VLLM_ATTENTION_BACKEND_ARG` for optimized performance on Blackwell. |
-| `--moe-backend` | `marlin` | MoE dispatch backend. Set to `marlin` via `VLLM_MOE_BACKEND_ARG` for optimized MoE on Blackwell. |
+| `--moe-backend` | disabled | MoE dispatch backend. Only applies to MoE models; the current dense model doesn't need it. Set via `VLLM_MOE_BACKEND_ARG` (e.g. `marlin`) for optimized MoE on Blackwell. |
 | `--async-scheduling` | enabled | Overlaps request scheduling with GPU execution to improve throughput. Set via `VLLM_ASYNC_SCHEDULING`. |
 | `--load-format` | `fastsafetensors` | Model weight loading strategy. Set to `fastsafetensors` via `VLLM_LOAD_FORMAT_ARG` for faster startup. |
 | `--trust-remote-code` | enabled | Allows model-supplied custom code. Set via `VLLM_TRUST_REMOTE_CODE` only for trusted model repos. |

@@ -9,7 +9,7 @@ services:
   # vLLM – GPU inference engine (no published port)
   # ----------------------------------------------------------
   vllm:
-    image: vllm/vllm-openai:v0.23.0
+    image: vllm/vllm-openai:v0.28.0
     container_name: vllm
     shm_size: "${VLLM_SHM_SIZE:-16g}"    # NCCL shared memory; increase proportionally with VLLM_TENSOR_PARALLEL_ARG (e.g. 32g for 2 GPUs)
     environment:
@@ -85,7 +85,7 @@ services:
   # LiteLLM – API gateway (auth, rate limiting, caching)
   # ----------------------------------------------------------
   litellm:
-    image: ghcr.io/berriai/litellm:v1.88.2
+    image: ghcr.io/berriai/litellm:v1.98.0
     container_name: litellm
     ports:
       - "0.0.0.0:4000:4000"            # bind IPv4 only; avoids IPv6 bypass when Docker IPv6 is enabled
@@ -112,9 +112,12 @@ services:
       vllm:
         condition: service_healthy     # delay start until vLLM's /health endpoint returns 200
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health/readiness || exit 1"]
-      interval: 15s                    # readiness check also verifies the vLLM backend is reachable
-      timeout: 5s
+      # /health/readiness only checks the DB/cache config, not the vLLM backend (litellm >=1.9x).
+      # /health (authenticated) runs a real completion against the named deployment, so it's the
+      # only endpoint that actually detects a dead/unreachable vLLM backend after startup.
+      test: ["CMD-SHELL", "curl -sf -H \"Authorization: Bearer $$LITELLM_MASTER_KEY\" \"http://localhost:4000/health?model=$$MODEL_NAME\" || exit 1"]
+      interval: 30s                    # /health triggers a live backend call each time; less frequent than a cheap ping
+      timeout: 10s
       retries: 3
       start_period: 30s
     stop_grace_period: 30s              # allow in-flight proxy requests to drain before SIGKILL
